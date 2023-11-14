@@ -31,8 +31,6 @@ def build(args):
     args.ini file must be a json file
 
     """
-    import json
-    
     fin = open(args.ini)
     cfgs = json.load(fin)
     
@@ -103,24 +101,21 @@ def stage_dataset(ini,test_out,train_out,test_split=0.2,test_labels=[],train_lab
             img = Z[jdx,:] 
             mask = M[jdx,:]
             
-            #label = labels[jdx]
-            label = 0
-            #if jdx >= row['comma']: label = 1
-            #if jdx >= row['comma'] and jdx <row['1.5-fold']: label = 1
-            if jdx >= row['comma']: label = 1
-            #if jdx >= row['1.5-fold'] and jdx <row['2-fold']: label = 2
-            #if jdx >= row['1.5-fold']:  label = 2
-            #if jdx >= row['2-fold']: label = 3
-            if row['hatch'] > -1 and jdx >= row['hatch']: label = 2
-            if label == 2: continue
+            label_comma = get_label_comma(jdx,row)
+            label_2fold = get_label_two_fold(jdx,row)
+            label_all = get_all_labels(jdx,row)
             
+            if label_comma == -1: continue
+            
+            labels = [label_comma, label_2fold, label_all]
+
             if to_test[idx] == 1:
                 img = img.reshape(dy,dx)
                 mask = mask.reshape(dy,dx)
                 image = loader.array_16bit_to_8bit(img)
                 fout = test_out % test_kdx
                 np.save(fout, image)
-                test_labels.append([os.path.basename(fout),label])
+                test_labels.append([os.path.basename(fout)] + labels)
                 test_kdx += 1
 
             else:
@@ -129,23 +124,66 @@ def stage_dataset(ini,test_out,train_out,test_split=0.2,test_labels=[],train_lab
                 image = loader.array_16bit_to_8bit(img)
                 fout = train_out % train_kdx
                 np.save(fout, image)
-                train_labels.append([os.path.basename(fout),label])
+                train_labels.append([os.path.basename(fout)] + labels)
                 train_kdx += 1
-               
+                
+                """
                 #Rotate
                 image,mask = random_rotate(image,mask)
                 fout = train_out % train_kdx
                 np.save(fout, image)
-                train_labels.append([os.path.basename(fout),label])
+                train_labels.append([os.path.basename(fout)] + labels)
                 train_kdx += 1
  
                 #Flip
                 image,mask = random_flip(image,mask)
                 fout = train_out % train_kdx
                 np.save(fout, image)
-                train_labels.append([os.path.basename(fout),label])
+                train_labels.append([os.path.basename(fout)] + labels)
                 train_kdx += 1
+                """
+
+def get_label_comma(jdx,row):
+    label = 0
+    if jdx >= row['comma']: label = 1
+    if row['hatch'] > -1 and jdx >= row['hatch']: label = -1
+    return label
+
+def get_label_two_fold(jdx,row):
+    label = 0
+    if jdx >= row['2-fold']: label = 1
+    if row['hatch'] > -1 and jdx >= row['hatch']: label = -1
+    return label
+
+def get_all_labels(jdx,row):
+    label = 0
+    if jdx >= row['comma'] and jdx <row['1.5-fold']: label = 1
+    if jdx >= row['1.5-fold'] and jdx <row['2-fold']: label = 2
+    if jdx >= row['2-fold']: label = 3
+    if row['hatch'] > -1 and jdx >= row['hatch']: label = -1
+
+    return label
+
+
+
+def get_mean_and_std(args):
+    fin = open(args.ini)
+    cfgs = json.load(fin)
     
+    train_in = os.path.join(cfgs['root_dir_to'],cfgs['train_dir'])
+    train_labels = os.path.join(cfgs['root_dir_to'],cfgs['train_labels'])
+    tpairs = read.into_list(train_labels,multi_dim=True)[::50]
+    num_imgs = len(tpairs)
+    
+    Z = np.zeros((num_imgs,2))
+    for idx in tqdm(range(num_imgs),desc="Images processed"):
+        fin = train_in % idx
+        img = np.load(fin) / 255.
+        Z[idx,0] = np.mean(img)
+        Z[idx,1] = np.std(img)
+
+    print(Z.mean(0))
+
 
 def mask_compare(img,mask_0,mask_1): 
     mu0 = img[mask_0].mean()
