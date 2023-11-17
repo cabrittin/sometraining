@@ -65,6 +65,12 @@ def stage_dataset(ini,test_out,train_out,test_split=0.2,test_labels=[],train_lab
     S = Session(ini)
     dx = 2*S.cfg.getint('roi','dx')
     dy = 2*S.cfg.getint('roi','dy')
+    
+    baseline_time_correction = 1.16
+    num_frames = S.cfg.getfloat('analysis','num_frames')
+    img_duration = S.cfg.getfloat('analysis','image_duration_hours')
+    dt = img_duration*3600 / num_frames
+    dt = dt / 60. * baseline_time_correction
 
     vdir = S.cfg['structure']['volumes']
     mdir = S.cfg['structure']['mask_volumes']
@@ -101,13 +107,15 @@ def stage_dataset(ini,test_out,train_out,test_split=0.2,test_labels=[],train_lab
             img = Z[jdx,:] 
             mask = M[jdx,:]
             
-            label_comma = get_label_comma(jdx,row)
+            #label_comma = get_label_comma(jdx,row)
+            label_fold = get_label_fold(jdx,row)
             label_2fold = get_label_two_fold(jdx,row)
             label_all = get_all_labels(jdx,row)
+            time_score = get_time_score(jdx,row,dt)
+
+            if label_fold == -1: continue
             
-            if label_comma == -1: continue
-            
-            labels = [label_comma, label_2fold, label_all]
+            labels = [label_fold, label_2fold, label_all, time_score]
 
             if to_test[idx] == 1:
                 img = img.reshape(dy,dx)
@@ -149,6 +157,12 @@ def get_label_comma(jdx,row):
     if row['hatch'] > -1 and jdx >= row['hatch']: label = -1
     return label
 
+def get_label_fold(jdx,row):
+    label = 0
+    if jdx >= row['1.5-fold']: label = 1
+    if row['hatch'] > -1 and jdx >= row['hatch']: label = -1
+    return label
+
 def get_label_two_fold(jdx,row):
     label = 0
     if jdx >= row['2-fold']: label = 1
@@ -163,6 +177,13 @@ def get_all_labels(jdx,row):
     if row['hatch'] > -1 and jdx >= row['hatch']: label = -1
 
     return label
+
+def get_time_score(jdx,row,dt,scale=400):
+    ref_pt = row['1.5-fold']
+    score = ((jdx - ref_pt) * dt) / scale
+    score = max(-1,score)
+    score = min(1,score)
+    return score
 
 
 
