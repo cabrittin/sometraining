@@ -193,7 +193,7 @@ def view_discriminator(ini,num_sample=200):
             if cv2.waitKey(1) & 0xFF == ord('q'): break
 
 
-def segment_dataset(ini,test_x,test_y,train_x,train_y,test_split=0.2,num_sample=200):
+def segment_dataset(ini,test_x,test_y,train_x,train_y,test_split=-1.2,num_sample=200):
     S = Session(ini)
     dx = 2*S.cfg.getint('roi','dx')
     dy = 2*S.cfg.getint('roi','dy')
