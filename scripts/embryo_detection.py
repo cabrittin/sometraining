@@ -14,6 +14,7 @@ from inspect import getmembers,isfunction
 import json
 import cv2
 import numpy as np
+from tqdm import tqdm
 
 from pycsvparser import read
 
@@ -52,6 +53,13 @@ def add_roi_to_image(I,rois):
     for [r0,r1] in rois: cv2.rectangle(I,r0,r1,(255,0,0),2)
     return I
 
+def load_data(dmap,idx):
+    rois = rois_from_file(dmap[idx][1])
+    I = np.load(dmap[idx][0])
+    I = array_16bit_to_8bit(I)
+    return I,rois
+
+
 def build(args):
     """
     Builds augmented training data for embryo recognition
@@ -74,6 +82,26 @@ def build(args):
     print(f"Writing test_x image data to: {test_x}") 
     print(f"Writing test_y image data to: {test_y}") 
 
+    M = len(dmap)
+    I = [array_16bit_to_8bit(np.load(dmap[i][0])) for i in range(M)]
+    rois = [rois_from_file(dmap[i][1]) for i in range(M)]
+    
+    tt_split = cfg['train_test_split']
+    train_idx = 0
+    test_idx = 0
+    for i in tqdm(range(cfg['num_sample']),desc="Samples generated"):
+        mdx = np.random.randint(low=0,high=M)
+        A,r = augment(I[mdx],rois[mdx])
+        r = np.array(r).astype(np.uint8)
+        if np.random.rand() < tt_split:
+            np.save(test_x%test_idx,A)
+            np.save(test_y%test_idx,r)
+            test_idx += 1
+        else:
+            np.save(train_x%train_idx,A)
+            np.save(train_y%train_idx,r)
+            train_idx += 1
+
 def view_augmentation(args):
     fin = open(args.json)
     cfg = json.load(fin)
@@ -83,9 +111,7 @@ def view_augmentation(args):
     cv2.namedWindow(win)
     cv2.moveWindow(win,300,500)
     
-    rois = rois_from_file(dmap[0][1])
-    I = np.load(dmap[0][0])
-    I = array_16bit_to_8bit(I)
+    I,rois = load_data(dmap,0)
 
     m,n = I.shape
     Z = np.zeros((2*m,3*n,3),dtype=np.uint8)
