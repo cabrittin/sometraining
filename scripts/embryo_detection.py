@@ -84,12 +84,11 @@ def view_augmentation(args):
     cv2.moveWindow(win,300,500)
     
     rois = rois_from_file(dmap[0][1])
-    
     I = np.load(dmap[0][0])
     I = array_16bit_to_8bit(I)
 
     m,n = I.shape
-    Z = np.zeros((m,3*n,3),dtype=np.uint8)
+    Z = np.zeros((2*m,3*n,3),dtype=np.uint8)
 
     Z[:m,:n] = add_roi_to_image(I,rois)
     
@@ -101,36 +100,79 @@ def view_augmentation(args):
     A,r = flip_ud(I,rois)
     Z[:m,2*n:] = add_roi_to_image(A,r)
 
+    #Blank 
+    A,r = random_blank_rois(I,rois,p_blank=0.5)
+    Z[m:2*m,:n] = add_roi_to_image(A,r)
+    
+    #Rotate
+    A,r = random_rotate_rois(I,rois)
+    Z[m:2*m,n:2*n] = add_roi_to_image(A,r)
+    
+    #Random augment
+    A,r = augment(I,rois)
+    Z[m:2*m,2*n:] = add_roi_to_image(A,r)
 
-    Z = cv2.resize(Z, (0,0), fx=0.5, fy=0.5)
+    Z = cv2.resize(Z, (0,0), fx=0.35, fy=0.35)
     cv2.imshow(win,Z)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-    
+
+def augment(I,rois):
+    p_blank = np.random.rand()
+    A,r = random_blank_rois(I,rois,p_blank=p_blank)
+    A,r = random_rotate_rois(A,r)
+    if np.random.rand() < 0.5: 
+        A,r = flip_lr(A,r)
+    if np.random.rand() < 0.5:
+        A,r = flip_ud(A,r)
+    return A,r
 
 def flip_lr(I,_rois):
     m,n = I.shape
     A = np.flip(I,axis=1)
     rois = [] 
     for r in _rois:
-        r[0][0] = n - r[0][0]
-        r[1][0] = n - r[1][0]
-        rois.append(r)
+        tmp = [[n-r[0][0],r[0][1]],[n-r[1][0],r[1][1]]]
+        rois.append(tmp)
     return A,rois
 
 def flip_ud(I,_rois):
+    _rois = _rois.copy()
     m,n = I.shape
     A = np.flip(I,axis=0)
     rois = [] 
     for r in _rois:
-        r[0][1] = m - r[0][1]
-        r[1][1] = m - r[1][1]
-        
-        r[0][0] = n - r[0][0]
-        r[1][0] = n - r[1][0]
-
-        rois.append(r)
+        tmp = [[r[0][0],m-r[0][1]],[r[1][0],m-r[1][1]]]
+        rois.append(tmp)
     return A,rois
+
+def random_blank_rois(I,_rois,p_blank=0.5):
+    A = np.copy(I)
+    r = _rois[0]
+    dx = abs(r[1][1] - r[0][1])
+    dy = abs(r[1][0] - r[0][0])
+    m,n = I.shape
+
+    B = I[:dy,n-dx:]
+    
+    rois = []
+    make_blank = np.random.rand(len(_rois)) < p_blank
+    for (i,r) in enumerate(_rois):
+        if make_blank[i]: 
+            A[r[0][1]:r[1][1],r[0][0]:r[1][0]] = B
+        else: 
+            rois.append(r)
+    return A,rois
+
+def random_rotate_rois(I,_rois):
+    A = I[:,:] 
+    rot_val = np.random.randint(size=len(_rois),low=0,high=4)
+    for (i,r) in enumerate(_rois):
+        a = A[r[0][1]:r[1][1],r[0][0]:r[1][0]] 
+        a = np.rot90(a,rot_val[i]) 
+        A[r[0][1]:r[1][1],r[0][0]:r[1][0]] = a
+         
+    return A,_rois 
 
 
 if __name__=="__main__":
