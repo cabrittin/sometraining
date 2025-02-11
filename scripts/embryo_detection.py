@@ -5,6 +5,11 @@
 @author: Christopher Brittin   
 @email: "cabrittin"+ <at>+ "gmail"+ "."+ "com"
 @date: 
+
+ROIs reads as [[xmin,ymin],[xmax,ymax]]
+
+ROIs saved as [xmin,ymin,xmax,ymax] in numpy array
+
 """
 
 import sys
@@ -41,7 +46,7 @@ def load_data_map(cfg):
 def rois_from_file(fname):
     @read.parse_file(fname,multi_dim=True)
     def row_into_container(container,row=None,**kwargs):
-        roi = [[int(row[1]),int(row[2])],[int(row[3]),int(row[4])]]
+        roi = [int(row[1]),int(row[2]),int(row[3]),int(row[4])]
         container.append(roi)
 
     container = []
@@ -50,7 +55,7 @@ def rois_from_file(fname):
 
 def add_roi_to_image(I,rois):
     I = cv2.cvtColor(I,cv2.COLOR_GRAY2RGB)
-    for [r0,r1] in rois: cv2.rectangle(I,r0,r1,(255,0,0),2)
+    for [r0,r1,r2,r3] in rois: cv2.rectangle(I,[r0,r1],[r2,r3],(255,0,0),2)
     return I
 
 def load_data(dmap,idx):
@@ -59,6 +64,11 @@ def load_data(dmap,idx):
     I = array_16bit_to_8bit(I)
     return I,rois
 
+def sort_rois(_rois):
+    rois = []
+    for [x0,y0,x1,y1] in _rois:
+        rois.append([min(x0,x1),min(y0,y1),max(x0,x1),max(y0,y1)])
+    return rois
 
 def build(args):
     """
@@ -91,8 +101,12 @@ def build(args):
     test_idx = 0
     for i in tqdm(range(cfg['num_sample']),desc="Samples generated"):
         mdx = np.random.randint(low=0,high=M)
-        A,r = augment(I[mdx],rois[mdx])
-        r = np.array(r).astype(np.uint8)
+        r = []
+        while len(r) == 0:
+            A,r = augment(I[mdx],rois[mdx])
+        
+        r = sort_rois(r) 
+        r = np.array(r).astype(np.uint16)
         if np.random.rand() < tt_split:
             np.save(test_x%test_idx,A)
             np.save(test_y%test_idx,r)
@@ -121,6 +135,7 @@ def view_augmentation(args):
     #Flip Left/Right
     A,r = flip_lr(I,rois)
     Z[:m,n:2*n] = add_roi_to_image(A,r)
+    
 
     #Flip Up/Down
     A,r = flip_ud(I,rois)
@@ -158,7 +173,7 @@ def flip_lr(I,_rois):
     A = np.flip(I,axis=1)
     rois = [] 
     for r in _rois:
-        tmp = [[n-r[0][0],r[0][1]],[n-r[1][0],r[1][1]]]
+        tmp = [n-r[0],r[1],n-r[2],r[3]]
         rois.append(tmp)
     return A,rois
 
@@ -168,15 +183,15 @@ def flip_ud(I,_rois):
     A = np.flip(I,axis=0)
     rois = [] 
     for r in _rois:
-        tmp = [[r[0][0],m-r[0][1]],[r[1][0],m-r[1][1]]]
+        tmp = [r[0],m-r[1],r[2],m-r[3]]
         rois.append(tmp)
     return A,rois
 
 def random_blank_rois(I,_rois,p_blank=0.5):
     A = np.copy(I)
     r = _rois[0]
-    dx = abs(r[1][1] - r[0][1])
-    dy = abs(r[1][0] - r[0][0])
+    dx = abs(r[3] - r[1])
+    dy = abs(r[2] - r[0])
     m,n = I.shape
 
     B = I[:dy,n-dx:]
@@ -185,7 +200,7 @@ def random_blank_rois(I,_rois,p_blank=0.5):
     make_blank = np.random.rand(len(_rois)) < p_blank
     for (i,r) in enumerate(_rois):
         if make_blank[i]: 
-            A[r[0][1]:r[1][1],r[0][0]:r[1][0]] = B
+            A[r[1]:r[3],r[0]:r[2]] = B
         else: 
             rois.append(r)
     return A,rois
@@ -194,9 +209,9 @@ def random_rotate_rois(I,_rois):
     A = I[:,:] 
     rot_val = np.random.randint(size=len(_rois),low=0,high=4)
     for (i,r) in enumerate(_rois):
-        a = A[r[0][1]:r[1][1],r[0][0]:r[1][0]] 
+        a = A[r[1]:r[3],r[0]:r[2]] 
         a = np.rot90(a,rot_val[i]) 
-        A[r[0][1]:r[1][1],r[0][0]:r[1][0]] = a
+        A[r[1]:r[3],r[0]:r[2]] = a
          
     return A,_rois 
 
