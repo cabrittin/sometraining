@@ -41,7 +41,6 @@ def load_data_map(cfg):
     for (i,d) in enumerate(dmap):
         dmap[i][0] = os.path.join(ddir,d[0])
         dmap[i][1] = os.path.join(ddir,d[1])
-        dmap[i][2] = os.path.join(ddir,d[2])
     return dmap
 
 def rois_from_file(fname):
@@ -59,17 +58,11 @@ def add_roi_to_image(I,rois):
     for [r0,r1,r2,r3] in rois: cv2.rectangle(I,[r0,r1],[r2,r3],(255,0,0),2)
     return I
 
-def build_mask_image(I,rois,masks):
-    Z = np.zeros(I.shape,dtype=np.uint8)
-    for (i,[r0,r1,r2,r3]) in enumerate(rois): 
-        Z[r1:r3,r0:r2] = 255*masks[i,:]
-    Z = cv2.cvtColor(Z,cv2.COLOR_GRAY2RGB)
-    return Z
-
 def load_data(dmap,idx):
+    rois = rois_from_file(dmap[idx][1])
     I = np.load(dmap[idx][0])
     I = array_16bit_to_8bit(I)
-    return I,np.load(dmap[idx][1]),np.load(dmap[idx][2])
+    return I,rois
 
 def sort_rois(_rois):
     rois = []
@@ -99,28 +92,28 @@ def build(args):
     print(f"Writing test_x image data to: {test_x}") 
     print(f"Writing test_y image data to: {test_y}") 
 
-    I,rois,masks = load_data(dmap,0)
+    M = len(dmap)
+    I = [array_16bit_to_8bit(np.load(dmap[i][0])) for i in range(M)]
+    rois = [rois_from_file(dmap[i][1]) for i in range(M)]
     
     tt_split = cfg['train_test_split']
     train_idx = 0
     test_idx = 0
     for i in tqdm(range(cfg['num_sample']),desc="Samples generated"):
-        #mdx = np.random.randint(low=0,high=M)
-        
+        mdx = np.random.randint(low=0,high=M)
         r = []
         while len(r) == 0:
-            #A,r,msk = augment(I[mdx],rois[mdx])
-            A,r,msk = augment(I,rois,masks)
+            A,r = augment(I[mdx],rois[mdx])
         
         r = sort_rois(r) 
         r = np.array(r).astype(np.uint16)
         if np.random.rand() < tt_split:
             np.save(test_x%test_idx,A)
-            np.savez(test_y%test_idx,roi=r,mask=msk)
+            np.save(test_y%test_idx,r)
             test_idx += 1
         else:
             np.save(train_x%train_idx,A)
-            np.savez(train_y%train_idx,roi=r,mask=msk)
+            np.save(train_y%train_idx,r)
             train_idx += 1
 
 def view_augmentation(args):
@@ -128,103 +121,73 @@ def view_augmentation(args):
     cfg = json.load(fin)
     dmap = load_data_map(cfg) 
     
-    win1 = 'Augmentation-1'
-    cv2.namedWindow(win1)
-    cv2.moveWindow(win1,300,100)
+    win = 'Augmentation'
+    cv2.namedWindow(win)
+    cv2.moveWindow(win,300,500)
     
-    win2 = 'Augmentation-2'
-    cv2.namedWindow(win2)
-    cv2.moveWindow(win2,1500,100)
-    
-    I,rois,masks = load_data(dmap,0)
+    I,rois = load_data(dmap,0)
 
     m,n = I.shape
-    #Z = np.zeros((2*m,3*n,3),dtype=np.uint8)
-    Z = np.zeros((4*m,2*n,3),dtype=np.uint8)
-    
-    I0 = cv2.cvtColor(I,cv2.COLOR_GRAY2RGB)
+    Z = np.zeros((2*m,3*n,3),dtype=np.uint8)
+
     Z[:m,:n] = add_roi_to_image(I,rois)
-    #Z[:m,:n] = I0
-    Z[:m,n:2*n] = build_mask_image(I,rois,masks) 
     
     #Flip Left/Right
-    A,r,msk = flip_lr(I,rois,masks)
-    Z[m:2*m,:n] = add_roi_to_image(A,r)
-    Z[m:2*m,n:2*n] = build_mask_image(I,r,msk) 
+    A,r = flip_lr(I,rois)
+    Z[:m,n:2*n] = add_roi_to_image(A,r)
     
-    #Flip Left/Right
-    A,r,msk = flip_ud(I,rois,masks)
-    Z[2*m:3*m,:n] = add_roi_to_image(A,r)
-    Z[2*m:3*m,n:2*n] = build_mask_image(I,r,msk) 
-    
+
+    #Flip Up/Down
+    A,r = flip_ud(I,rois)
+    Z[:m,2*n:] = add_roi_to_image(A,r)
+
     #Blank 
-    A,r,msk = random_blank_rois(I,rois,masks,p_blank=0.5)
-    Z[3*m:4*m,:n] = add_roi_to_image(A,r)
-    Z[3*m:4*m,n:2*n] = build_mask_image(I,r,msk) 
-    
-    ZZ = np.zeros((3*m,2*n,3),dtype=np.uint8)
+    A,r = random_blank_rois(I,rois,p_blank=0.5)
+    Z[m:2*m,:n] = add_roi_to_image(A,r)
     
     #Rotate
-    A,r,msk = random_rotate_rois(I,rois,masks)
-    ZZ[:m,:n] = add_roi_to_image(A,r)
-    ZZ[:m,n:2*n] = build_mask_image(I,r,msk) 
-     
-    #Random swap rois
-    A,r,msk = random_swap_rois(I,rois,masks)
-    ZZ[m:2*m,:n] = add_roi_to_image(A,r)
-    ZZ[m:2*m,n:2*n] = build_mask_image(I,r,msk) 
+    A,r = random_rotate_rois(I,rois)
+    Z[m:2*m,n:2*n] = add_roi_to_image(A,r)
     
     #Random augment
-    A,r,msk = augment(I,rois,masks)
-    ZZ[2*m:3*m,:n] = add_roi_to_image(A,r)
-    ZZ[2*m:3*m,n:2*n] = build_mask_image(I,r,msk)
-    
+    A,r = augment(I,rois)
+    Z[m:2*m,2*n:] = add_roi_to_image(A,r)
+
     Z = cv2.resize(Z, (0,0), fx=0.35, fy=0.35)
-    cv2.imshow(win1,Z)
-    
-    ZZ = cv2.resize(ZZ, (0,0), fx=0.35, fy=0.35)
-    cv2.imshow(win2,ZZ)
- 
+    cv2.imshow(win,Z)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
-def augment(I,rois,masks):
+def augment(I,rois):
     p_blank = np.random.rand()
-    A,r,msk = random_blank_rois(I,rois,masks,p_blank=p_blank)
-    A,r,msk = random_swap_rois(A,r,msk)
-    A,r,msk = random_rotate_rois(A,r,msk)
+    A,r = random_blank_rois(I,rois,p_blank=p_blank)
+    A,r = random_rotate_rois(A,r)
     if np.random.rand() < 0.5: 
-        A,r,msk = flip_lr(A,r,msk)
+        A,r = flip_lr(A,r)
     if np.random.rand() < 0.5:
-        A,r,msk = flip_ud(A,r,msk)
-    
-    return A,r,msk
+        A,r = flip_ud(A,r)
+    return A,r
 
-def flip_lr(I,_rois,_masks):
+def flip_lr(I,_rois):
     m,n = I.shape
     A = np.flip(I,axis=1)
-    rois = []
-    masks = np.zeros(_masks.shape)
-    for (i,r) in enumerate(_rois):
+    rois = [] 
+    for r in _rois:
         tmp = [n-r[0],r[1],n-r[2],r[3]]
         rois.append(tmp)
-        masks[i,:,:] = np.flip(_masks[i,:,:],axis=1)
-    rois = sort_rois(rois) 
-    return A,rois,masks
+    return A,rois
 
-def flip_ud(I,_rois,_masks):
+def flip_ud(I,_rois):
+    _rois = _rois.copy()
     m,n = I.shape
     A = np.flip(I,axis=0)
     rois = [] 
-    masks = np.zeros(_masks.shape)
-    for (i,r) in enumerate(_rois):
+    for r in _rois:
         tmp = [r[0],m-r[1],r[2],m-r[3]]
         rois.append(tmp)
-        masks[i,:,:] = np.flip(_masks[i,:,:],axis=0)
-    rois = sort_rois(rois) 
-    return A,rois,masks
+    return A,rois
 
-def random_blank_rois(I,_rois,_masks,p_blank=0.5):
+def random_blank_rois(I,_rois,p_blank=0.5):
     A = np.copy(I)
     r = _rois[0]
     dx = abs(r[3] - r[1])
@@ -234,40 +197,24 @@ def random_blank_rois(I,_rois,_masks,p_blank=0.5):
     B = I[:dy,n-dx:]
     
     rois = []
-    masks = []
     make_blank = np.random.rand(len(_rois)) < p_blank
     for (i,r) in enumerate(_rois):
         if make_blank[i]: 
             A[r[1]:r[3],r[0]:r[2]] = B
         else: 
             rois.append(r)
-            masks.append(_masks[i,:,:])
-    return A,rois,np.array(masks)
+    return A,rois
 
-def random_rotate_rois(I,_rois,_masks):
-    A = np.copy(I)
+def random_rotate_rois(I,_rois):
+    A = I[:,:] 
     rot_val = np.random.randint(size=len(_rois),low=0,high=4)
-    masks = np.zeros(_masks.shape) 
     for (i,r) in enumerate(_rois):
         a = A[r[1]:r[3],r[0]:r[2]] 
         a = np.rot90(a,rot_val[i]) 
         A[r[1]:r[3],r[0]:r[2]] = a
-        masks[i,:,:] = np.rot90(_masks[i,:,:],rot_val[i]) 
-    return A,_rois,masks 
+         
+    return A,_rois 
 
-def random_swap_rois(I,_rois,_masks):
-    A = np.copy(I)
-    B = np.copy(I)
-    pdx = np.arange(len(_rois))
-    np.random.shuffle(pdx)
-    masks = np.zeros(_masks.shape) 
-    for i in range(len(_rois)):
-        r = _rois[pdx[i]]
-        a = A[r[1]:r[3],r[0]:r[2]] 
-        masks[i,:,:] = _masks[pdx[i],:,:] 
-        r = _rois[i]
-        B[r[1]:r[3],r[0]:r[2]] = a
-    return B,_rois,masks 
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description=__doc__,
