@@ -62,8 +62,8 @@ def add_roi_to_image(I,rois):
 def build_mask_image(I,rois,masks):
     Z = np.zeros(I.shape,dtype=np.uint8)
     for (i,[r0,r1,r2,r3]) in enumerate(rois): 
-        Z[r1:r3,r0:r2] = 255*masks[i,:]
-    Z = cv2.cvtColor(Z,cv2.COLOR_GRAY2RGB)
+        Z[r1:r3,r0:r2] = (i+1)*masks[i,:]
+    #Z = cv2.cvtColor(Z,cv2.COLOR_GRAY2RGB)
     return Z
 
 def load_data(dmap,idx):
@@ -114,6 +114,7 @@ def build(args):
         
         r = sort_rois(r) 
         r = np.array(r).astype(np.uint16)
+        msk = build_mask_image(A,rois,masks)  
         if np.random.rand() < tt_split:
             np.save(test_x%test_idx,A)
             np.savez(test_y%test_idx,roi=r,mask=msk)
