@@ -6,9 +6,7 @@
 @email: "cabrittin"+ <at>+ "gmail"+ "."+ "com"
 @date: 
 
-ROIs reads as [[xmin,ymin],[xmax,ymax]]
-
-ROIs saved as [xmin,ymin,xmax,ymax] in numpy array
+ROIs format [xmin,ymin,xmax,ymax] in numpy array
 
 """
 
@@ -43,16 +41,6 @@ def load_data_map(cfg):
         dmap[i][1] = os.path.join(ddir,d[1])
         dmap[i][2] = os.path.join(ddir,d[2])
     return dmap
-
-def rois_from_file(fname):
-    @read.parse_file(fname,multi_dim=True)
-    def row_into_container(container,row=None,**kwargs):
-        roi = [int(row[1]),int(row[2]),int(row[3]),int(row[4])]
-        container.append(roi)
-
-    container = []
-    row_into_container(container)
-    return container
 
 def add_roi_to_image(I,rois):
     I = cv2.cvtColor(I,cv2.COLOR_GRAY2RGB)

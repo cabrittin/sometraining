@@ -1,308 +1,174 @@
 """
-@name: generate_training.py                         
+@name: embryo_segment.py 
 @description:                  
-    Script for generating training data
+   Generate segment data 
 
 @author: Christopher Brittin   
 @email: "cabrittin"+ <at>+ "gmail"+ "."+ "com"
-@date: 2019-12-05              
+@date: 
 """
 
 import sys
 import os
 import argparse
 from inspect import getmembers,isfunction
+import json
 import cv2
 import numpy as np
 from tqdm import tqdm
-import random 
-import pandas as pd
-import json
-import matplotlib.pyplot as plt
-import glob
-from natsort import natsorted
 
+from pycsvparser import read
 
-from pycsvparser import read,write
-from dataset.loader import Session
-import dataset.loader as loader
+def array_16bit_to_8bit(a):
+    # If already 8bit, return array
+    if a.dtype == 'uint8': return a
+    a = np.array(a,copy=True)
+    display_min = np.amin(a)
+    display_max = np.amax(a)
+    a.clip(display_min, display_max, out=a)
+    a -= display_min
+    np.floor_divide(a, (display_max - display_min + 1) / 256,
+                    out=a, casting='unsafe')
+    return a.astype('uint8') 
+
+def load_data_map(cfg):
+    ddir = os.path.join(cfg['root'],cfg['data_dir']) 
+    dmap = read.into_list(os.path.join(cfg['root'],cfg['data_map']),multi_dim=True)
+    for (i,d) in enumerate(dmap):
+        dmap[i][0] = os.path.join(ddir,d[0])
+        dmap[i][1] = os.path.join(ddir,d[1])
+        dmap[i][2] = os.path.join(ddir,d[2])
+    return dmap
+
+def load_data(dmap,idx):
+    I = np.load(dmap[idx][0])
+    I = array_16bit_to_8bit(I)
+    return I,np.load(dmap[idx][1]),np.load(dmap[idx][2])
 
 def build(args):
-    """"
-    Pipes training data for staging
-
-    args.ini file must be a json file
-
     """
-    fin = open(args.ini)
-    cfgs = json.load(fin)
+    Builds augmented training data for embryo recognition
     
-    test_x = os.path.join(cfgs['root_dir_to'],cfgs['test_x_dir'])
-    test_y = os.path.join(cfgs['root_dir_to'],cfgs['test_y_dir'])
-    train_x = os.path.join(cfgs['root_dir_to'],cfgs['train_x_dir'])
-    train_y = os.path.join(cfgs['root_dir_to'],cfgs['train_y_dir'])
+    Parameters:
+    -----------
+    args: Argsparse from commandline
+    """
+    fin = open(args.json)
+    cfg = json.load(fin)
     
+    test_x = os.path.join(cfg['root'],cfg['test_x'])
+    test_y = os.path.join(cfg['root'],cfg['test_y'])
+    train_x = os.path.join(cfg['root'],cfg['train_x'])
+    train_y = os.path.join(cfg['root'],cfg['train_y'])
+    dmap = load_data_map(cfg) 
+
     print(f"Writing train_x image data to: {train_x}") 
     print(f"Writing train_y image data to: {train_y}") 
     print(f"Writing test_x image data to: {test_x}") 
     print(f"Writing test_y image data to: {test_y}") 
 
-    for ini in cfgs['ini']:
-        ini = os.path.join(cfgs['root_dir_from'],ini)
-        print(f"Piping training data from {ini}")
-        segment_dataset(ini,
-                test_x,test_y,train_x,train_y,
-                test_split = cfgs['train_test_split'],
-                num_sample= cfgs['num_sample'])  
-
-def check_masks(args):
-    """"
-    Pipes training data for staging
-
-    args.ini file must be a json file
-
-    """
-    fin = open(args.ini)
-    cfgs = json.load(fin)
+    I,rois,masks = load_data(dmap,0)
     
-    test_x = os.path.join(cfgs['root_dir_to'],cfgs['test_x_dir'])
-    test_y = os.path.join(cfgs['root_dir_to'],cfgs['test_y_dir'])
-    train_x = os.path.join(cfgs['root_dir_to'],cfgs['train_x_dir'])
-    train_y = os.path.join(cfgs['root_dir_to'],cfgs['train_y_dir'])
+    tt_split = cfg['train_test_split']
+    train_idx = 0
+    test_idx = 0
     
-    for ini in cfgs['ini']:
-        ini = os.path.join(cfgs['root_dir_from'],ini)
-        print(f"Piping training data from {ini}")
-        check_dataset(ini,
-                test_x,test_y,train_x,train_y,
-                test_split = cfgs['train_test_split'],
-                num_sample= cfgs['num_sample'])  
+    N = len(rois)
+
+    for i in tqdm(range(N),desc="Samples processed"):
+        [x0,y0,x1,y1] = rois[i,:]
+        I0 = I[y0:y1,x0:x1]
+        mask = masks[0,:,:]
+        for j in range(3):
+            A0 = np.copy(I0) 
+            M0 = np.copy(mask)
+            if j < 2: A0,M0 = flip(I0,mask,j)
+            for k in range(4):
+                A,M = rotate(A0,M0,k)
+                if np.random.rand() < tt_split:
+                    np.save(test_x%test_idx,A)
+                    np.save(test_y%test_idx,M)
+                    test_idx += 1
+                else:
+                    np.save(train_x%train_idx,A)
+                    np.save(train_y%train_idx,M)
+                    train_idx += 1 
 
 
-def preprocess(args):
-    fin = open(args.ini)
-    cfgs = json.load(fin)
-    
-    stats = []
-    for ini in cfgs['ini']:
-        ini = os.path.join(cfgs['root_dir_from'],ini)
-        stats.append(get_segment_stats(ini))
-
-
-def view_preprocess(args):
-    fin = open(args.ini)
-    cfgs = json.load(fin)
-    
-    for ini in cfgs['ini']:
-        ini = os.path.join(cfgs['root_dir_from'],ini)
-        view_discriminator(ini)
-
-
-
-def get_iopiars(S): 
-    vdir = S.cfg['structure']['volumes']
-    mdir = S.cfg['structure']['mask_volumes']
-    files = os.listdir(vdir)
-    iopairs = []
-    for f in files:
-        vpath = os.path.join(vdir,f)
-        if not os.path.isfile(vpath): continue
-        mpath = os.path.join(mdir,f"mask_{f}")
-        iopairs.append((vpath,mpath))
-    return iopairs
-
-
-def get_segment_stats(ini,num_sample=200):
-    S = Session(ini)
-    dx = 2*S.cfg.getint('roi','dx')
-    dy = 2*S.cfg.getint('roi','dy')
-    
-    iopairs = get_iopiars(S)
-
-    pdiff = np.zeros((len(iopairs)*num_sample,3)) 
-    idx = 0
-    for (jdx,(vol_path,mask_path)) in tqdm(enumerate(iopairs),total=len(iopairs),desc='I/O pairs'):
-        
-        Z = np.load(vol_path)
-        M = np.load(mask_path)
-        
-        for i in range(num_sample):
-            rdx = random.randint(0,Z.shape[0]-1)
-            img = Z[rdx,:] 
-            mask = M[rdx,:] 
-            m0 = np.where(mask==0)[0]
-            m1 = np.where(mask==1)[0] 
-     
-            pdiff[idx,:2] = mask_compare(img,mask) 
-            pdiff[idx,2] = int(keep_mask(pdiff[idx,0],pdiff[idx,1]))
-            
-            
-            idx += 1
-
-    print(pdiff.mean(0))
-    print(pdiff.std(0))
-
-    fig,ax = plt.subplots(1,1,figsize=(5,5))
-    ax.scatter(pdiff[:,0],pdiff[:,1],s=2,c=pdiff[:,2],cmap='bwr')
-    plt.show()
-
-
-def view_discriminator(ini,num_sample=200):
-    S = Session(ini)
-    dx = 2*S.cfg.getint('roi','dx')
-    dy = 2*S.cfg.getint('roi','dy')
-    
-    iopairs = get_iopiars(S)
-    
-    wkeep = 'Keep'
-    cv2.namedWindow(wkeep)
-    cv2.moveWindow(wkeep,300,500)
-    
-    wrm = 'Remove'
-    cv2.namedWindow(wrm)
-    cv2.moveWindow(wrm,800,500)
+def view_augmentation(args):
+    fin = open(args.json)
+    cfg = json.load(fin)
+    dmap = load_data_map(cfg) 
  
-    idx = 0
-    for (jdx,(vol_path,mask_path)) in tqdm(enumerate(iopairs),total=len(iopairs),desc='I/O pairs'):
-        
-        Z = np.load(vol_path)
-        M = np.load(mask_path)
-        
-        for i in range(num_sample):
-            rdx = random.randint(0,Z.shape[0]-1)
-            img = Z[rdx,:] 
-            mask = M[rdx,:] 
-            m0 = np.where(mask==0)[0]
-            m1 = np.where(mask==1)[0] 
-     
-            norm_pdiff,msize = mask_compare(img,mask) 
-            
-            img = loader.array_16bit_to_8bit(img) 
-            mask = M[rdx,:]
-            
-            img = img.reshape(dy,dx)
-            mask = mask.reshape(dy,dx)
+    win1 = 'Augmentation-1'
+    cv2.namedWindow(win1)
+    cv2.moveWindow(win1,300,100)
 
-            image = (img * mask).astype('uint8')
-            
-            if keep_mask(norm_pdiff,msize):
-                cv2.imshow(wkeep,image)
-            else:
-                cv2.imshow(wrm,image)
-            
-            if cv2.waitKey(1) & 0xFF == ord('q'): break
+    I,rois,masks = load_data(dmap,0)
 
+    [x0,y0,x1,y1] = rois[0,:]
+    I = I[y0:y1,x0:x1]
+    mask = masks[0,:,:]
 
-def segment_dataset(ini,test_x,test_y,train_x,train_y,test_split=-1.2,num_sample=200):
-    S = Session(ini)
-    dx = 2*S.cfg.getint('roi','dx')
-    dy = 2*S.cfg.getint('roi','dy')
+    m,n = I.shape
+    Z = np.zeros((7*m,3*n),dtype=np.uint8)
     
-    vdir = S.cfg['structure']['volumes']
-    mdir = S.cfg['structure']['mask_volumes']
-    files = os.listdir(vdir)
-    iopairs = []
-    for f in files:
-        vpath = os.path.join(vdir,f)
-        if not os.path.isfile(vpath): continue
-        mpath = os.path.join(mdir,f"mask_{f}")
-        iopairs.append((vpath,mpath))
-
-    num_test = int(test_split * len(iopairs))
-    to_test = np.zeros(len(iopairs),dtype=np.uint8)
-    to_test[:num_test] = 1
-    np.random.shuffle(to_test)
-
-    _iout = [train_x,test_x]
-    _mout = [train_y,test_y]
-   
-    idx = [0,0]
-    for (jdx,(vol_path,mask_path)) in tqdm(enumerate(iopairs),total=len(iopairs),desc='I/O pairs'):
-        iout = _iout[to_test[jdx]]
-        mout = _mout[to_test[jdx]]
-        
-        Z = np.load(vol_path)
-        M = np.load(mask_path)
-        
-        for i in range(num_sample):
-            rdx = random.randint(0,Z.shape[0]-1)
-            img = Z[rdx,:] 
-            mask = M[rdx,:] 
-            m0 = np.where(mask==0)[0]
-            m1 = np.where(mask==1)[0] 
-     
-            norm_pdiff,msize = mask_compare(img,mask) 
+    #Original mask
+    Z[:m,:n] = I
+    Z[:m,n:2*n] = 255*mask
+    Z[:m,2*n:3*n] = np.multiply(I,mask)
+    
+    #Rotate 0
+    A,M = rotate(I,mask,0)
+    Z[m:2*m,:n] = A
+    Z[m:2*m,n:2*n] = 255*M 
+    Z[m:2*m,2*n:3*n] = np.multiply(A,M)
+    
+    #Rotate 1
+    A,M = rotate(I,mask,1)
+    Z[2*m:3*m,:n] = A
+    Z[2*m:3*m,n:2*n] = 255*M 
+    Z[2*m:3*m,2*n:3*n] = np.multiply(A,M)
+    
+    #Rotate 2
+    A,M = rotate(I,mask,2)
+    Z[3*m:4*m,:n] = A
+    Z[3*m:4*m,n:2*n] = 255*M 
+    Z[3*m:4*m,2*n:3*n] = np.multiply(A,M)
+    
+    #Rotate 3
+    A,M = rotate(I,mask,3)
+    Z[4*m:5*m,:n] = A
+    Z[4*m:5*m,n:2*n] = 255*M 
+    Z[4*m:5*m,2*n:3*n] = np.multiply(A,M)
+    
+    #Flip Up/Down
+    A,M = flip(I,mask,0)
+    Z[5*m:6*m,:n] = A
+    Z[5*m:6*m,n:2*n] = 255*M 
+    Z[5*m:6*m,2*n:3*n] = np.multiply(A,M)
+    
+    #Flip Left/Rigth
+    A,M = flip(I,mask,1)
+    Z[6*m:7*m,:n] = A
+    Z[6*m:7*m,n:2*n] = 255*M 
+    Z[6*m:7*m,2*n:3*n] = np.multiply(A,M)
  
-            #img = loader.array_16bit_to_8bit(img) 
-            img = img.reshape(dy,dx)
-            mask = mask.reshape(dy,dx)
-            img,mask = random_rotate(img,mask)
-            img,mask = random_flip(img,mask)
-            
-            if keep_mask(norm_pdiff,msize):
-                np.save(iout%idx[to_test[jdx]],img.astype('uint8'))
-                np.save(mout%idx[to_test[jdx]],mask.astype('uint8'))
-
-                idx[to_test[jdx]] += 1
-
-def check_dataset(ini,test_x,test_y,train_x,train_y,test_split=0.2,num_sample=200):
-    train_x = os.path.dirname(train_x)
-    train_y = os.path.dirname(train_y)
-    img_path = natsorted([f for f in glob.iglob(f'{train_x}/*')])
-    mask_path = natsorted([f for f in glob.iglob(f'{train_y}/*')])
+    cv2.imshow(win1,Z)
     
-    wkeep = 'Check'
-    cv2.namedWindow(wkeep)
-    cv2.moveWindow(wkeep,300,500)
- 
-    for i in range(len(img_path)):
-        img = np.load(img_path[i])
-        mask = np.load(mask_path[i])
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
-        image = (img * mask).astype('uint8')
+def rotate(I,mask,val=0):
+    A = np.rot90(I,val) 
+    M = np.rot90(mask,val) 
+    return A,M 
 
-        cv2.imshow(wkeep,image)
+def flip(I,mask,val=0):
+    A = np.flip(I,axis=val)
+    M = np.flip(mask,axis=val)
+    return A,M
 
-        if cv2.waitKey(1) & 0xFF == ord('q'): break
-
-def mask_compare(img,mask):
-    mask_0 = np.where(mask==0)[0]
-    mask_1 = np.where(mask==1)[0] 
-    
-    mu0,mu1,std = 1,1,1
-    if len(mask_0) > 0: mu0 = img[mask_0].mean()
-    if len(mask_1) > 0: mu1 = img[mask_1].mean()
-    #mudiff = np.log(mu1) - np.log(mu0)
-    norm_pdiff = np.log(mu1) - np.log(mu0)
-    #std = np.log(img[mask_1].std())
-    msize = len(mask_1) 
-    return [norm_pdiff,msize] 
-
-def keep_mask(norm_pdiff,msize):
-    #return mudiff > 0.06 or (std > 5.25 and mudiff > 0)
-    #return mudiff > 0.1
-    #return mudiff > 0.25
-    c1 = norm_pdiff >= -1 and norm_pdiff <= -0.1
-    c2 = msize >= 2000 and msize <= 4300
-    return c1 and c2
-
-def convert_16_to_8_bit(img):
-    img = img - np.amin(img)
-    ratio = np.amax(img) / 256 
-    img = (img / ratio)
-    return img.astype('uint8')
-
-def random_rotate(img,mask):
-    rot_val = np.random.randint(low=0,high=4)
-    img = np.rot90(img,rot_val)
-    mask = np.rot90(mask,rot_val)
-    return img,mask
-
-def random_flip(img,mask):
-    flip_val = np.random.randint(low=0,high=2)
-    img = np.flip(img,flip_val)
-    mask = np.flip(mask,flip_val)
-    return img,mask
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description=__doc__,
@@ -313,26 +179,11 @@ if __name__=="__main__":
                         choices = [t for (t,o) in getmembers(sys.modules[__name__]) if isfunction(o)],
                         help = 'Function call')
     
-    parser.add_argument('ini',
+    parser.add_argument('json',
                 action = 'store',
-                help = 'Path to .ini config file')
+                help = 'Path to .json config file')
     
-    parser.add_argument('--viz',
-                dest = 'viz', 
-                action = 'store_true',
-                default = False,
-                required = False,
-                help = 'If True, then vizualize output')
-    
-    parser.add_argument('-n','--num_jobs',
-            dest = 'num_jobs',
-            action = 'store',
-            default = 2,
-            type=int,
-            required = False,
-            help = 'Number of parallel jobs')
-
-
     args = parser.parse_args()
     eval(args.mode + '(args)')
+
 
