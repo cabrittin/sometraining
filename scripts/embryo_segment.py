@@ -16,6 +16,7 @@ import json
 import cv2
 import numpy as np
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from pycsvparser import read
 
@@ -74,26 +75,61 @@ def build(args):
     test_idx = 0
     
     N = len(rois)
-
-    for i in tqdm(range(N),desc="Samples processed"):
+    
+    for _ in tqdm(range(cfg['num_sample']),desc="Samples generated"):
+        i = np.random.randint(N)
         [x0,y0,x1,y1] = rois[i,:]
         I0 = I[y0:y1,x0:x1]
-        mask = masks[0,:,:]
-        for j in range(3):
-            A0 = np.copy(I0) 
-            M0 = np.copy(mask)
-            if j < 2: A0,M0 = flip(I0,mask,j)
-            for k in range(4):
-                A,M = rotate(A0,M0,k)
-                if np.random.rand() < tt_split:
-                    np.save(test_x%test_idx,A)
-                    np.save(test_y%test_idx,M)
-                    test_idx += 1
-                else:
-                    np.save(train_x%train_idx,A)
-                    np.save(train_y%train_idx,M)
-                    train_idx += 1 
+        mask = masks[i,:,:]
+        dp = np.random.randint(20)
+        if dp > 0: 
+            A,M = shift(I0,mask,dp,np.random.randint(4))
+        else:
+            A = np.copy(I0)
+            M = np.copy(mask)
+        j = np.random.randint(3)
+        if j < 2: A,M = flip(A,M,j)
+        k = np.random.randint(4)
+        A,M = rotate(A,M,k)
+        if np.random.rand() < tt_split:
+            np.save(test_x%test_idx,A)
+            np.save(test_y%test_idx,M)
+            test_idx += 1
+        else:
+            np.save(train_x%train_idx,A)
+            np.save(train_y%train_idx,M)
+            train_idx += 1 
 
+def check(args):
+    fin = open(args.json)
+    cfg = json.load(fin)
+    dmap = load_data_map(cfg) 
+    
+    train_x = os.path.join(cfg['root'],cfg['train_x'])
+    train_y = os.path.join(cfg['root'],cfg['train_y'])
+    
+    N = 10
+    I,rois,masks = load_data(dmap,0)
+    [x0,y0,x1,y1] = rois[0,:]
+    I = I[y0:y1,x0:x1]
+    mask = masks[0,:,:]
+    m,n = I.shape
+    Z = np.zeros((N*m,3*n),dtype=np.uint8)
+    
+    for i in range(N):
+        X = np.load(train_x%i)
+        Y = np.load(train_y%i)
+        
+        Z[i*m:(i+1)*m,:n] = X
+        Z[i*m:(i+1)*m,n:2*n] = 255*Y
+        Z[i*m:(i+1)*m,2*n:3*n] = np.multiply(X,Y)
+
+
+    fig,ax = plt.subplots(1,1)
+    ax.imshow(Z,cmap='gray')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.show()
 
 def view_augmentation(args):
     fin = open(args.json)
@@ -111,7 +147,7 @@ def view_augmentation(args):
     mask = masks[0,:,:]
 
     m,n = I.shape
-    Z = np.zeros((7*m,3*n),dtype=np.uint8)
+    Z = np.zeros((8*m,3*n),dtype=np.uint8)
     
     #Original mask
     Z[:m,:n] = I
@@ -153,7 +189,12 @@ def view_augmentation(args):
     Z[6*m:7*m,:n] = A
     Z[6*m:7*m,n:2*n] = 255*M 
     Z[6*m:7*m,2*n:3*n] = np.multiply(A,M)
- 
+
+    A,M = shift_up(A,M,20)
+    Z[7*m:8*m,:n] = A
+    Z[7*m:8*m,n:2*n] = 255*M 
+    Z[7*m:8*m,2*n:3*n] = np.multiply(A,M)
+
     cv2.imshow(win1,Z)
     
     cv2.waitKey(0)
@@ -169,6 +210,45 @@ def flip(I,mask,val=0):
     M = np.flip(mask,axis=val)
     return A,M
 
+def shift(I,mask,dp,val): 
+    if val == 0:
+        return shift_right(I,mask,dp)
+    elif val == 1:
+        return shift_left(I,mask,dp)
+    elif val == 2:
+        return shift_up(I,mask,dp)
+    elif val == 3:
+        return shift_down(I,mask,dp)
+
+def shift_right(I,mask,dp):
+    A = np.copy(I)
+    A[:,dp:] = I[:,:-dp]
+    M = np.zeros(mask.shape)
+    M[:,dp:] = mask[:,:-dp]
+    return A,M
+ 
+def shift_left(I,mask,dp):
+    A = np.copy(I)
+    A[:,:-dp] = I[:,dp:]
+    M = np.zeros(mask.shape)
+    M[:,:-dp] = mask[:,dp:]
+    return A,M
+
+def shift_down(I,mask,dp):
+    A = np.copy(I)
+    A[dp:,:] = I[:-dp,:]
+    M = np.zeros(mask.shape)
+    M[dp:,:] = mask[:-dp,:]
+    return A,M
+ 
+def shift_up(I,mask,dp):
+    A = np.copy(I)
+    A[:-dp,:] = I[dp:,:]
+    M = np.zeros(mask.shape)
+    M[:-dp,:] = mask[dp:,:]
+    return A,M
+
+  
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description=__doc__,

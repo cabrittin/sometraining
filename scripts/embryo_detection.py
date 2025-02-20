@@ -18,6 +18,7 @@ import json
 import cv2
 import numpy as np
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from pycsvparser import read
 
@@ -102,7 +103,7 @@ def build(args):
         
         r = sort_rois(r) 
         r = np.array(r).astype(np.uint16)
-        msk = build_mask_image(A,rois,masks)  
+        msk = build_mask_image(A,r,msk)  
         if np.random.rand() < tt_split:
             np.save(test_x%test_idx,A)
             np.savez(test_y%test_idx,roi=r,mask=msk)
@@ -112,6 +113,41 @@ def build(args):
             np.savez(train_y%train_idx,roi=r,mask=msk)
             train_idx += 1
 
+def validate_build(args):
+    fin = open(args.json)
+    cfg = json.load(fin)
+    
+    test_x = os.path.join(cfg['root'],cfg['test_x'])
+    test_y = os.path.join(cfg['root'],cfg['test_y'])
+    train_x = os.path.join(cfg['root'],cfg['train_x'])
+    train_y = os.path.join(cfg['root'],cfg['train_y'])
+    dmap = load_data_map(cfg) 
+
+    I,rois,masks = load_data(dmap,0)
+    m,n = I.shape
+    Z = np.zeros((m,2*n,3),dtype=np.uint8)
+    
+    win1 = 'Augmentation-1'
+    cv2.namedWindow(win1)
+    cv2.moveWindow(win1,300,100)
+    fout = os.path.join(cfg['root'],'validation/build_validataion.png')
+    
+    idx = 10
+    X = np.load(test_x%idx)
+    Y = np.load(test_y%idx)
+    
+    Z[:m,:n] = add_roi_to_image(X,Y['roi'])
+    z = (Y['mask'] > 0) * 255
+    Z[:m,n:2*n] = cv2.cvtColor(z.astype(np.uint8),cv2.COLOR_GRAY2RGB)
+    
+    Z = cv2.resize(Z, (0,0), fx=0.35, fy=0.35)
+    cv2.imshow(win1,Z)
+    cv2.imwrite(fout,Z)
+    print(f'Saved to: {fout}') 
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
 def view_augmentation(args):
     fin = open(args.json)
     cfg = json.load(fin)
@@ -120,59 +156,78 @@ def view_augmentation(args):
     win1 = 'Augmentation-1'
     cv2.namedWindow(win1)
     cv2.moveWindow(win1,300,100)
-    
+    fout1 = os.path.join(cfg['root'],'validation/validation_1.png')
+
     win2 = 'Augmentation-2'
     cv2.namedWindow(win2)
     cv2.moveWindow(win2,1500,100)
+    fout2 = os.path.join(cfg['root'],'validation/validation_2.png')
     
     I,rois,masks = load_data(dmap,0)
 
     m,n = I.shape
     #Z = np.zeros((2*m,3*n,3),dtype=np.uint8)
     Z = np.zeros((4*m,2*n,3),dtype=np.uint8)
-    
+
     I0 = cv2.cvtColor(I,cv2.COLOR_GRAY2RGB)
     Z[:m,:n] = add_roi_to_image(I,rois)
-    #Z[:m,:n] = I0
-    Z[:m,n:2*n] = build_mask_image(I,rois,masks) 
+    z = build_mask_image(I,rois,masks) 
+    z[z>0] = 255 
+    Z[:m,n:2*n] = cv2.cvtColor(z,cv2.COLOR_GRAY2RGB)
     
     #Flip Left/Right
     A,r,msk = flip_lr(I,rois,masks)
     Z[m:2*m,:n] = add_roi_to_image(A,r)
-    Z[m:2*m,n:2*n] = build_mask_image(I,r,msk) 
+    z = build_mask_image(I,r,msk) 
+    z[z>0] = 255 
+    Z[m:2*m,n:2*n] = cv2.cvtColor(z,cv2.COLOR_GRAY2RGB)
     
     #Flip Left/Right
     A,r,msk = flip_ud(I,rois,masks)
     Z[2*m:3*m,:n] = add_roi_to_image(A,r)
-    Z[2*m:3*m,n:2*n] = build_mask_image(I,r,msk) 
+    z = build_mask_image(I,r,msk) 
+    z[z>0] = 255 
+    Z[2*m:3*m,n:2*n] = cv2.cvtColor(z,cv2.COLOR_GRAY2RGB)
     
     #Blank 
     A,r,msk = random_blank_rois(I,rois,masks,p_blank=0.5)
     Z[3*m:4*m,:n] = add_roi_to_image(A,r)
-    Z[3*m:4*m,n:2*n] = build_mask_image(I,r,msk) 
+    z = build_mask_image(I,r,msk) 
+    z[z>0] = 255 
+    Z[3*m:4*m,n:2*n] = cv2.cvtColor(z,cv2.COLOR_GRAY2RGB)
     
     ZZ = np.zeros((3*m,2*n,3),dtype=np.uint8)
     
     #Rotate
     A,r,msk = random_rotate_rois(I,rois,masks)
     ZZ[:m,:n] = add_roi_to_image(A,r)
-    ZZ[:m,n:2*n] = build_mask_image(I,r,msk) 
+    z = build_mask_image(I,r,msk) 
+    z[z>0] = 255 
+    ZZ[:m,n:2*n] = cv2.cvtColor(z,cv2.COLOR_GRAY2RGB)
      
     #Random swap rois
     A,r,msk = random_swap_rois(I,rois,masks)
     ZZ[m:2*m,:n] = add_roi_to_image(A,r)
-    ZZ[m:2*m,n:2*n] = build_mask_image(I,r,msk) 
+    z = build_mask_image(I,r,msk) 
+    z[z>0] = 255 
+    ZZ[m:2*m,n:2*n] = cv2.cvtColor(z,cv2.COLOR_GRAY2RGB)
     
     #Random augment
     A,r,msk = augment(I,rois,masks)
     ZZ[2*m:3*m,:n] = add_roi_to_image(A,r)
-    ZZ[2*m:3*m,n:2*n] = build_mask_image(I,r,msk)
+    z = build_mask_image(I,r,msk) 
+    z[z>0] = 255 
+    ZZ[2*m:3*m,n:2*n] = cv2.cvtColor(z,cv2.COLOR_GRAY2RGB)
     
     Z = cv2.resize(Z, (0,0), fx=0.35, fy=0.35)
     cv2.imshow(win1,Z)
-    
+    cv2.imwrite(fout1,Z)
+    print(f'Saved to: {fout1}') 
+
     ZZ = cv2.resize(ZZ, (0,0), fx=0.35, fy=0.35)
     cv2.imshow(win2,ZZ)
+    cv2.imwrite(fout2,ZZ)
+    print(f'Saved to: {fout2}') 
  
     cv2.waitKey(0)
     cv2.destroyAllWindows()

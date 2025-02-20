@@ -43,26 +43,15 @@ def load_data_map(cfg):
         dmap[i][1] = os.path.join(ddir,d[1])
     return dmap
 
-def rois_from_file(fname):
-    @read.parse_file(fname,multi_dim=True)
-    def row_into_container(container,row=None,**kwargs):
-        roi = [int(row[1]),int(row[2]),int(row[3]),int(row[4])]
-        container.append(roi)
-
-    container = []
-    row_into_container(container)
-    return container
-
 def add_roi_to_image(I,rois):
     I = cv2.cvtColor(I,cv2.COLOR_GRAY2RGB)
     for [r0,r1,r2,r3] in rois: cv2.rectangle(I,[r0,r1],[r2,r3],(255,0,0),2)
     return I
 
 def load_data(dmap,idx):
-    rois = rois_from_file(dmap[idx][1])
     I = np.load(dmap[idx][0])
     I = array_16bit_to_8bit(I)
-    return I,rois
+    return I,np.load(dmap[idx][1]),np.load(dmap[idx][2])
 
 def sort_rois(_rois):
     rois = []
